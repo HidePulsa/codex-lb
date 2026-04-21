@@ -481,7 +481,7 @@ def _canonicalize_tools(payload: MutableJsonObject) -> None:
     if not tool_list:
         return
     sorted_tools = sorted(tool_list, key=_tool_sort_key)
-    payload["tools"] = [_sort_keys_recursive(t) for t in sorted_tools]
+    payload["tools"] = [_sort_keys_recursive(_strip_none_values_recursive(t)) for t in sorted_tools]
 
 
 def _tool_sort_key(tool: JsonValue) -> str:
@@ -505,6 +505,15 @@ def _sort_keys_recursive(value: JsonValue) -> JsonValue:
         return {k: _sort_keys_recursive(v) for k, v in sorted(mapping.items())}
     if is_json_list(value):
         return [_sort_keys_recursive(item) for item in value]
+    return value
+
+
+def _strip_none_values_recursive(value: JsonValue) -> JsonValue:
+    if is_json_mapping(value):
+        mapping = value
+        return {k: _strip_none_values_recursive(v) for k, v in mapping.items() if v is not None}
+    if is_json_list(value):
+        return [_strip_none_values_recursive(item) for item in value]
     return value
 
 
