@@ -1,7 +1,7 @@
 ﻿from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import Any, cast
+from typing import cast
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -12,6 +12,7 @@ from app.core.openai.requests import (
     ResponsesTextControls,
     ResponsesTextFormat,
     normalize_tool_type,
+    validate_tool_types,
 )
 from app.core.types import JsonValue
 from app.core.utils.json_guards import is_json_list, is_json_mapping
@@ -39,33 +40,13 @@ def _json_mapping(value: JsonValue | OpenAIMessage) -> Mapping[str, JsonValue] |
     return value
 
 
-class ChatCompletionToolFunction(BaseModel):
-    model_config = ConfigDict(extra="allow")
-
-    name: str | None = None
-    description: str | None = None
-    parameters: JsonValue | None = None
-
-
-class ChatCompletionTool(BaseModel):
-    model_config = ConfigDict(extra="allow")
-
-    # Sengaja dibuat longgar untuk kompatibilitas tool modern:
-    # function, image_generation, computer, bash, text_editor, dll.
-    type: str = "function"
-    function: ChatCompletionToolFunction | JsonValue | None = None
-    name: str | None = None
-    description: str | None = None
-    parameters: JsonValue | None = None
-
-
 class ChatCompletionsRequest(BaseModel):
-    model_config = ConfigDict(extra="ignore")
+    model_config = ConfigDict(extra="allow")
 
     model: str = Field(min_length=1)
     messages: list[OpenAIMessage]
-    tools: list[ChatCompletionTool | JsonValue] = Field(default_factory=list)
-    tool_choice: Any | None = None
+    tools: list[JsonValue] = Field(default_factory=list)
+    tool_choice: str | dict[str, JsonValue] | None = None
     parallel_tool_calls: bool | None = None
     stream: bool | None = None
     temperature: float | None = None
@@ -83,32 +64,11 @@ class ChatCompletionsRequest(BaseModel):
     max_completion_tokens: int | None = None
     store: bool | None = None
     stream_options: ChatStreamOptions | None = None
-    reasoning_effort: str | None = None
-    logit_bias: dict[str, int] | None = None
 
     @field_validator("tools")
     @classmethod
-    def _validate_tools(cls, value: list[ChatCompletionTool | JsonValue]) -> list[JsonValue]:
-        # Tidak melempar error untuk tool type non-function.
-        # Hanya normalisasi alias tool type yang diketahui.
-        normalized_tools: list[JsonValue] = []
-        for tool in value:
-            if isinstance(tool, ChatCompletionTool):
-                tool_value: JsonValue = cast(JsonValue, tool.model_dump(mode="json", exclude_none=True))
-            else:
-                tool_value = tool
-
-            if is_json_mapping(tool_value):
-                tool_mapping = dict(tool_value)
-                tool_type = tool_mapping.get("type")
-                if isinstance(tool_type, str):
-                    tool_mapping["type"] = normalize_tool_type(tool_type)
-                normalized_tools.append(cast(JsonValue, tool_mapping))
-                continue
-
-            normalized_tools.append(tool_value)
-
-        return normalized_tools
+    def _validate_tools(cls, value: list[JsonValue]) -> list[JsonValue]:
+        return validate_tool_types(value)
 
     @field_validator("messages")
     @classmethod
@@ -166,15 +126,6 @@ class ChatCompletionsRequest(BaseModel):
         data.pop("n", None)
         data.pop("max_tokens", None)
         data.pop("max_completion_tokens", None)
-        # Legacy Chat Completions sampling/diagnostic controls are not part of
-        # the upstream Responses payload contract we target here.
-        data.pop("top_p", None)
-        data.pop("stop", None)
-        data.pop("presence_penalty", None)
-        data.pop("frequency_penalty", None)
-        data.pop("logprobs", None)
-        data.pop("top_logprobs", None)
-        data.pop("seed", None)
         response_format = data.pop("response_format", None)
         stream_options = data.pop("stream_options", None)
         tools = _normalize_chat_tools(data.pop("tools", []))
@@ -230,63 +181,49 @@ def _normalize_chat_tools(tools: list[JsonValue]) -> list[JsonValue]:
     for tool in tools:
         if not isinstance(tool, dict):
             continue
-
-        tool_mapping = dict(tool)
-        tool_type_value = tool_mapping.get("type")
-        tool_type: str | None = None
-        if isinstance(tool_type_value, str) and tool_type_value:
-            tool_type = normalize_tool_type(tool_type_value)
-            if tool_type != tool_type_value:
-                tool_mapping["type"] = tool_type
-
-        function = _json_mapping(tool_mapping.get("function"))
-
-        # Hanya proses bentuk function jika memang function.
-        if (tool_type in (None, "function")) and function is not None:
+        tool_type = tool.get("type")
+        function = tool.get("function")
+        if isinstance(function, dict):
             name = function.get("name")
             if not isinstance(name, str) or not name:
                 continue
             normalized.append(
                 {
-                    "type": "function",
+                    "type": tool_type or "function",
                     "name": name,
                     "description": function.get("description"),
                     "parameters": function.get("parameters"),
                 }
             )
             continue
-
-        # Tool non-function dilewatkan apa adanya agar tidak crash.
-        if isinstance(tool_type, str) and tool_type:
-            normalized.append(tool_mapping)
-            continue
-
-        name = tool_mapping.get("name")
+        if isinstance(tool_type, str):
+            normalized_type = normalize_tool_type(tool_type)
+            if normalized_type == "web_search":
+                if normalized_type != tool_type:
+                    tool = dict(tool)
+                    tool["type"] = normalized_type
+                normalized.append(tool)
+                continue
+        name = tool.get("name")
         if isinstance(name, str) and name:
-            normalized.append(tool_mapping)
-
+            normalized.append(tool)
     return normalized
 
 
 def _normalize_tool_choice(tool_choice: JsonValue | None) -> JsonValue | None:
     if not isinstance(tool_choice, dict):
         return tool_choice
-
-    normalized_choice = dict(tool_choice)
-    tool_type = normalized_choice.get("type")
-    if isinstance(tool_type, str):
-        normalized_type = normalize_tool_type(tool_type)
-        if normalized_type != tool_type:
-            normalized_choice["type"] = normalized_type
-            tool_type = normalized_type
-
-    function = normalized_choice.get("function")
+    tool_type = tool_choice.get("type")
+    if isinstance(tool_type, str) and tool_type == "web_search_preview":
+        tool_choice = dict(tool_choice)
+        tool_choice["type"] = "web_search"
+        tool_type = "web_search"
+    function = tool_choice.get("function")
     if isinstance(function, dict):
         name = function.get("name")
         if isinstance(name, str) and name:
             return {"type": tool_type or "function", "name": name}
-
-    return normalized_choice
+    return tool_choice
 
 
 def _apply_response_format(data: dict[str, JsonValue], response_format: JsonValue) -> None:
