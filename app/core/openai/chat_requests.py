@@ -18,6 +18,7 @@ from app.core.types import JsonValue
 from app.core.utils.json_guards import is_json_list, is_json_mapping
 
 _SUPPORTED_CHAT_ROLES = frozenset({"system", "developer", "user", "assistant", "tool"})
+_SUPPORTED_CHAT_TOOL_TYPES = frozenset({"function", "web_search"})
 
 
 def _content_parts(content: JsonValue) -> list[JsonValue]:
@@ -182,31 +183,45 @@ def _normalize_chat_tools(tools: list[JsonValue]) -> list[JsonValue]:
         if not isinstance(tool, dict):
             continue
         tool_type = tool.get("type")
+        normalized_type = normalize_tool_type(tool_type) if isinstance(tool_type, str) else None
         function = tool.get("function")
         if isinstance(function, dict):
             name = function.get("name")
             if not isinstance(name, str) or not name:
                 continue
-            normalized.append(
-                {
-                    "type": tool_type or "function",
-                    "name": name,
-                    "description": function.get("description"),
-                    "parameters": function.get("parameters"),
-                }
-            )
+            normalized_tool: dict[str, JsonValue] = {
+                "type": "function",
+                "name": name,
+            }
+            description = function.get("description")
+            if description is not None:
+                normalized_tool["description"] = description
+            parameters = function.get("parameters")
+            if parameters is not None:
+                normalized_tool["parameters"] = parameters
+            normalized.append(normalized_tool)
             continue
-        if isinstance(tool_type, str):
-            normalized_type = normalize_tool_type(tool_type)
-            if normalized_type == "web_search":
-                if normalized_type != tool_type:
-                    tool = dict(tool)
-                    tool["type"] = normalized_type
-                normalized.append(tool)
-                continue
+        if normalized_type is None or normalized_type not in _SUPPORTED_CHAT_TOOL_TYPES:
+            continue
+        if normalized_type == "web_search":
+            if normalized_type != tool_type:
+                tool = dict(tool)
+                tool["type"] = normalized_type
+            normalized.append(tool)
+            continue
         name = tool.get("name")
         if isinstance(name, str) and name:
-            normalized.append(tool)
+            normalized_tool = {
+                "type": "function",
+                "name": name,
+            }
+            description = tool.get("description")
+            if description is not None:
+                normalized_tool["description"] = description
+            parameters = tool.get("parameters")
+            if parameters is not None:
+                normalized_tool["parameters"] = parameters
+            normalized.append(normalized_tool)
     return normalized
 
 
@@ -222,7 +237,12 @@ def _normalize_tool_choice(tool_choice: JsonValue | None) -> JsonValue | None:
     if isinstance(function, dict):
         name = function.get("name")
         if isinstance(name, str) and name:
+            if isinstance(tool_type, str) and tool_type not in _SUPPORTED_CHAT_TOOL_TYPES:
+                return None
             return {"type": tool_type or "function", "name": name}
+    if isinstance(tool_type, str):
+        if tool_type not in _SUPPORTED_CHAT_TOOL_TYPES:
+            return None
     return tool_choice
 
 
