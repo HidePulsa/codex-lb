@@ -2842,12 +2842,12 @@ class ProxyService:
                         and durable_lookup is None
                     ):
                         continuity_error = ProxyResponseError(
-                            400,
-                            _http_bridge_previous_response_error_envelope(
-                                previous_response_id,
+                            502,
+                            openai_error(
+                                "upstream_unavailable",
                                 (
-                                    "HTTP bridge continuity was lost. Replay x-codex-turn-state "
-                                    "or retry with a stable prompt_cache_key."
+                                    "HTTP bridge continuity was lost before previous_response_id could be "
+                                    "recovered. Retry with the same previous_response_id and x-codex-turn-state."
                                 ),
                             ),
                         )
@@ -8007,3 +8007,4 @@ def _normalize_service_tier_value(value: JsonValue) -> str | None:
     if stripped.lower() == "fast":
         return "priority"
     return stripped
+
