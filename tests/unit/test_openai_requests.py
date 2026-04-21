@@ -383,6 +383,26 @@ def test_responses_normalizes_tool_choice_web_search_preview(tool_choice):
     assert request.tool_choice == {"type": "web_search"}
 
 
+def test_responses_tools_drop_null_fields_in_payload():
+    payload = {
+        "model": "gpt-5.1",
+        "instructions": "hi",
+        "input": [],
+        "tools": [
+            {
+                "type": "function",
+                "name": "arguments",
+                "description": None,
+                "parameters": None,
+            }
+        ],
+    }
+    request = ResponsesRequest.model_validate(payload)
+
+    dumped = request.to_payload()
+    assert dumped["tools"] == [{"type": "function", "name": "arguments"}]
+
+
 def test_responses_rejects_invalid_include_value():
     payload = {
         "model": "gpt-5.1",
