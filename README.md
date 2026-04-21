@@ -364,6 +364,19 @@ The protected proxy routes covered by this setting are:
 Environment variables with `CODEX_LB_` prefix or `.env.local`. See [`.env.example`](.env.example).
 SQLite is the default database backend; PostgreSQL is optional via `CODEX_LB_DATABASE_URL` (for example `postgresql+asyncpg://...`).
 
+### VPS install and update scripts
+
+Use `instaled/install.sh` for first install and `instaled/update.sh` for updates.
+
+Runtime env file is `/root/codex-lb.env` (copied from `.env.example` only when missing).
+
+After pushing changes to GitHub, update on VPS with:
+
+```bash
+cd /opt/codex-lb
+bash instaled/update.sh
+```
+
 ### Dashboard authentication modes
 
 `codex-lb` supports three dashboard auth modes via environment variables:
