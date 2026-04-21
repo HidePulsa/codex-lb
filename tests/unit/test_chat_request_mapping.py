@@ -201,6 +201,37 @@ def test_chat_tools_are_normalized():
     assert "function" not in first_tool
 
 
+def test_chat_tools_drop_null_optional_fields():
+    payload = {
+        "model": "gpt-5.2",
+        "messages": [{"role": "user", "content": "hi"}],
+        "tools": [{"type": "function", "function": {"name": "arguments"}}],
+    }
+    req = ChatCompletionsRequest.model_validate(payload)
+    responses = req.to_responses_request()
+    dumped = responses.to_payload()
+    tools = dumped.get("tools")
+    assert isinstance(tools, list)
+    assert tools == [{"type": "function", "name": "arguments"}]
+
+
+def test_chat_tools_drop_unsupported_tool_types():
+    payload = {
+        "model": "gpt-5.2",
+        "messages": [{"role": "user", "content": "hi"}],
+        "tools": [
+            {"type": "mcp", "name": "arguments"},
+            {"type": "function", "function": {"name": "ok_fn"}},
+        ],
+    }
+    req = ChatCompletionsRequest.model_validate(payload)
+    responses = req.to_responses_request()
+    dumped = responses.to_payload()
+    tools = dumped.get("tools")
+    assert isinstance(tools, list)
+    assert tools == [{"type": "function", "name": "ok_fn"}]
+
+
 def test_chat_tool_choice_object_passes_through():
     payload = {
         "model": "gpt-5.2",
@@ -212,6 +243,18 @@ def test_chat_tool_choice_object_passes_through():
     dumped = responses.to_payload()
     tool_choice = dumped.get("tool_choice")
     assert tool_choice == {"type": "function", "name": "do_thing"}
+
+
+def test_chat_tool_choice_drops_unsupported_tool_type():
+    payload = {
+        "model": "gpt-5.2",
+        "messages": [{"role": "user", "content": "hi"}],
+        "tool_choice": {"type": "mcp", "name": "arguments"},
+    }
+    req = ChatCompletionsRequest.model_validate(payload)
+    responses = req.to_responses_request()
+    dumped = responses.to_payload()
+    assert "tool_choice" not in dumped
 
 
 def test_chat_response_format_json_object_maps_to_text_format():
